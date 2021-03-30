@@ -12,6 +12,9 @@ enum Error {
     NoSetFolder,
 }
 
+const TIMING_HEADER: &str = "[TimingPoints]";
+const DEFAULT_TIMING_LINE: &str = "0,-100,4,2,1,100,1,0";
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
@@ -75,7 +78,15 @@ fn write_point(line: &str, point: (Time, Volume)) -> String {
     .concat()
 }
 
-/// Convertes red lines to 1xSV green lines
+/// Split into (before_timing, timing, after_timing) where timing contains the
+/// timing points with no preceding or succeeding newlines
+fn extract_timing(source: &str) -> (&str, &str, &str) {
+    let start = source.find(TIMING_HEADER).unwrap() + TIMING_HEADER.len() + 1;
+    let end = start + source[start..].find("\n\n").unwrap();
+    (&source[..start], &source[start..end], &source[end..])
+}
+
+/// Converts red lines to 1xSV green lines
 fn make_inherited(line: &str) -> String {
     let mut csv: Vec<_> = line.split(',').collect();
     if !csv[1].starts_with('-') {
@@ -90,15 +101,10 @@ struct VolumeCurve {
 
 impl VolumeCurve {
     fn parse(source: &str) -> Self {
-        Self {
-            points: source
-                .lines()
-                .skip_while(|line| !line.starts_with("[TimingPoints]"))
-                .skip(1)
-                .take_while(|line| !line.is_empty())
-                .map(parse_point)
-                .collect(),
-        }
+        let (_, timing, _) = extract_timing(source);
+        let mut points: Vec<_> = timing.lines().map(parse_point).collect();
+        points.dedup();
+        Self { points }
     }
 
     fn load<P>(source: P) -> Result<Self, Error>
@@ -114,55 +120,44 @@ impl VolumeCurve {
         if self.points.is_empty() {
             return source.to_owned();
         }
-        let mut new_lines = Vec::new();
-        let mut parsing = false;
+        let (before_timing, timing, after_timing) = extract_timing(source);
+        let mut new_timing = Vec::new();
         let mut write_idx = 0;
         let mut current_volume = 100;
-        let mut last_line = "0,-100,4,2,1,100,1,0";
-        for line in source.lines() {
-            if parsing {
-                if line.trim().is_empty() {
-                    parsing = false;
-                    new_lines.push(line.to_owned());
-                } else {
-                    let old_point = parse_point(line);
-                    while write_idx < self.points.len()
-                        && self.points[write_idx].0 < old_point.0
-                    {
-                        new_lines.push(write_point(
-                            &make_inherited(last_line),
-                            self.points[write_idx],
-                        ));
-                        current_volume = self.points[write_idx].1;
-                        write_idx += 1;
-                    }
-                    if write_idx < self.points.len()
-                        && self.points[write_idx].0 == old_point.0
-                    {
-                        new_lines
-                            .push(write_point(line, self.points[write_idx]));
-                        current_volume = self.points[write_idx].1;
-                        write_idx += 1;
-                    } else {
-                        new_lines.push(write_point(
-                            &make_inherited(line),
-                            (old_point.0, current_volume),
-                        ));
-                    }
-                    last_line = line;
-                }
-            } else {
-                if line.starts_with("[TimingPoints]") {
-                    parsing = true;
-                }
-                new_lines.push(line.to_owned());
+        // TODO: it's probably a better behaviour choice to check and not insert
+        // anything until we've hit the first red line rather than having this
+        // default get inserted when the volume curve wants to do stuff before
+        // the first red line
+        let mut last_line = DEFAULT_TIMING_LINE;
+        for line in timing.lines() {
+            let old_point = parse_point(line);
+            while write_idx < self.points.len()
+                && self.points[write_idx].0 < old_point.0
+            {
+                new_timing.push(write_point(
+                    &make_inherited(last_line),
+                    self.points[write_idx],
+                ));
+                current_volume = self.points[write_idx].1;
+                write_idx += 1;
             }
+            if write_idx < self.points.len()
+                && self.points[write_idx].0 == old_point.0
+            {
+                new_timing.push(write_point(line, self.points[write_idx]));
+                current_volume = self.points[write_idx].1;
+                write_idx += 1;
+            } else {
+                new_timing.push(write_point(
+                    &make_inherited(line),
+                    (old_point.0, current_volume),
+                ));
+            }
+            last_line = line;
         }
-        let mut result = new_lines.join("\n");
-        if source.ends_with('\n') {
-            result.push('\n');
-        }
-        result
+        new_timing.dedup();
+        let new_timing = new_timing.join("\n");
+        [before_timing, &new_timing, after_timing].concat()
     }
 
     fn write<P>(&self, dest: P) -> Result<(), Error>
