@@ -2,14 +2,17 @@
 
 ## What?
 
-This is a commandline utility I made for copying the volume profiler between
+This is a commandline utility I made for copying the volume profile between
 difficulties of an [osu!](https://osu.ppy.sh/home) beatmap. Basic usage looks
 like:
 
 ```sh
-# copies volume from [Use This Diff] to all other diffs in the mapset
+# copies volumes from [Use This Diff] to all other diffs in the mapset
 $ osu-volume "my_osu_folder/Songs/my_mapset/my_mapset [Use This Diff].osu"
 ```
+
+This is done by modifying existing green lines and creating new ones to insert
+the appropriate volume changes while preserving the SV and hitsound settings.
 
 ## How?
 
@@ -27,4 +30,4 @@ I made this more for a quick use-case out of interest rather than practicality,
 and being a command-line tool this isn't the most user-friendly. For similar
 functionality see OliBomby's [mapping tools](https://mappingtools.seira.moe/)
 which boasts a wide range of mapping utilities packaged into a user-friendly
-GUI.
+GUI, in particular supporting hitsound copying which supercedes volume copying.
