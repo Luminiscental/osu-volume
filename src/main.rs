@@ -89,8 +89,9 @@ fn extract_timing(source: &str) -> (&str, &str, &str) {
 /// Converts red lines to 1xSV green lines
 fn make_inherited(line: &str) -> String {
     let mut csv: Vec<_> = line.split(',').collect();
-    if !csv[1].starts_with('-') {
+    if csv[6] == "1" {
         csv[1] = "-100";
+        csv[6] = "0";
     }
     csv.join(",")
 }
