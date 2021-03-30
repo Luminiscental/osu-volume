@@ -96,6 +96,13 @@ fn make_inherited(line: &str) -> String {
     csv.join(",")
 }
 
+/// Check if two timing points are the same ignoring their timestamps
+fn same_after_time(line1: &str, line2: &str) -> bool {
+    let idx1 = line1.find(',').unwrap_or(0);
+    let idx2 = line2.find(',').unwrap_or(0);
+    idx1 == idx2 && line1[idx1..] == line2[idx2..]
+}
+
 struct VolumeCurve {
     points: Vec<(Time, Volume)>,
 }
@@ -104,7 +111,7 @@ impl VolumeCurve {
     fn parse(source: &str) -> Self {
         let (_, timing, _) = extract_timing(source);
         let mut points: Vec<_> = timing.lines().map(parse_point).collect();
-        points.dedup();
+        points.dedup_by(|a, b| a.1 == b.1);
         Self { points }
     }
 
@@ -163,7 +170,7 @@ impl VolumeCurve {
             ));
             write_idx += 1;
         }
-        new_timing.dedup();
+        new_timing.dedup_by(|a, b| same_after_time(a, b));
         let new_timing = new_timing.join("\r\n");
         [before_timing, &new_timing, after_timing].concat()
     }
