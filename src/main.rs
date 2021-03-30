@@ -81,8 +81,8 @@ fn write_point(line: &str, point: (Time, Volume)) -> String {
 /// Split into (before_timing, timing, after_timing) where timing contains the
 /// timing points with no preceding or succeeding newlines
 fn extract_timing(source: &str) -> (&str, &str, &str) {
-    let start = source.find(TIMING_HEADER).unwrap() + TIMING_HEADER.len() + 1;
-    let end = start + source[start..].find("\n\n").unwrap();
+    let start = source.find(TIMING_HEADER).unwrap() + TIMING_HEADER.len() + 2;
+    let end = start + source[start..].find("\r\n\r\n").unwrap();
     (&source[..start], &source[start..end], &source[end..])
 }
 
@@ -156,7 +156,7 @@ impl VolumeCurve {
             last_line = line;
         }
         new_timing.dedup();
-        let new_timing = new_timing.join("\n");
+        let new_timing = new_timing.join("\r\n");
         [before_timing, &new_timing, after_timing].concat()
     }
 
