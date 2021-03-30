@@ -155,6 +155,13 @@ impl VolumeCurve {
             }
             last_line = line;
         }
+        while write_idx < self.points.len() {
+            new_timing.push(write_point(
+                &make_inherited(last_line),
+                self.points[write_idx],
+            ));
+            write_idx += 1;
+        }
         new_timing.dedup();
         let new_timing = new_timing.join("\r\n");
         [before_timing, &new_timing, after_timing].concat()
@@ -259,6 +266,7 @@ mod tests {
                 (1563, 15),
                 (2053, 100),
                 (2417, 30),
+                (3000, 50),
             ],
         };
         let source = include_str!("testdiff.in");
