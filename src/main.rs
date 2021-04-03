@@ -13,7 +13,6 @@ enum Error {
 }
 
 const TIMING_HEADER: &str = "[TimingPoints]";
-const DEFAULT_TIMING_LINE: &str = "0,-100,4,2,1,100,1,0";
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -29,12 +28,12 @@ impl Display for Error {
 
 impl error::Error for Error {}
 
-/// Enumerate the other .osu files in a beatmapset
-fn find_siblings<P>(source: P) -> Result<Vec<PathBuf>, Error>
+/// Enumerate the .osu files in the same folder as a given file
+fn find_siblings<P>(path: P) -> Result<Vec<PathBuf>, Error>
 where
     P: AsRef<Path>,
 {
-    let source_path = fs::canonicalize(source).map_err(Error::FileOpenError)?;
+    let source_path = fs::canonicalize(path).map_err(Error::FileOpenError)?;
     let set = fs::read_dir(source_path.parent().ok_or(Error::NoSetFolder)?)
         .map_err(Error::FileOpenError)?;
     let mut siblings = Vec::new();
@@ -86,7 +85,7 @@ fn extract_timing(source: &str) -> (&str, &str, &str) {
     (&source[..start], &source[start..end], &source[end..])
 }
 
-/// Converts red lines to 1xSV green lines
+/// Convert an uninherited line to an inherited line with default effects
 fn make_inherited(line: &str) -> String {
     let mut csv: Vec<_> = line.split(',').collect();
     if csv[6] == "1" {
@@ -97,10 +96,18 @@ fn make_inherited(line: &str) -> String {
 }
 
 /// Check if two timing points are the same ignoring their timestamps
-fn same_after_time(line1: &str, line2: &str) -> bool {
+fn same_after_time(line1: &mut String, line2: &mut String) -> bool {
     let idx1 = line1.find(',').unwrap_or(0);
     let idx2 = line2.find(',').unwrap_or(0);
     idx1 == idx2 && line1[idx1..] == line2[idx2..]
+}
+
+/// Check if two timing points have the same volume
+fn same_volume(
+    point1: &mut (Time, Volume),
+    point2: &mut (Time, Volume),
+) -> bool {
+    point1.1 == point2.1
 }
 
 struct VolumeCurve {
@@ -111,7 +118,7 @@ impl VolumeCurve {
     fn parse(source: &str) -> Self {
         let (_, timing, _) = extract_timing(source);
         let mut points: Vec<_> = timing.lines().map(parse_point).collect();
-        points.dedup_by(|a, b| a.1 == b.1);
+        points.dedup_by(same_volume);
         Self { points }
     }
 
@@ -132,20 +139,18 @@ impl VolumeCurve {
         let mut new_timing = Vec::new();
         let mut write_idx = 0;
         let mut current_volume = 100;
-        // TODO: it's probably a better behaviour choice to check and not insert
-        // anything until we've hit the first red line rather than having this
-        // default get inserted when the volume curve wants to do stuff before
-        // the first red line
-        let mut last_line = DEFAULT_TIMING_LINE;
+        let mut last_line = "";
         for line in timing.lines() {
             let old_point = parse_point(line);
             while write_idx < self.points.len()
                 && self.points[write_idx].0 < old_point.0
             {
-                new_timing.push(write_point(
-                    &make_inherited(last_line),
-                    self.points[write_idx],
-                ));
+                if !last_line.is_empty() {
+                    new_timing.push(write_point(
+                        &make_inherited(last_line),
+                        self.points[write_idx],
+                    ));
+                }
                 current_volume = self.points[write_idx].1;
                 write_idx += 1;
             }
@@ -170,7 +175,7 @@ impl VolumeCurve {
             ));
             write_idx += 1;
         }
-        new_timing.dedup_by(|a, b| same_after_time(a, b));
+        new_timing.dedup_by(same_after_time);
         let new_timing = new_timing.join("\r\n");
         [before_timing, &new_timing, after_timing].concat()
     }
@@ -268,6 +273,8 @@ mod tests {
     fn volume_curve_applies() {
         let curve = VolumeCurve {
             points: vec![
+                (5, 100),
+                (8, 2),
                 (15, 20),
                 (101, 30),
                 (1400, 20),
