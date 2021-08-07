@@ -206,8 +206,8 @@ fn main() -> Result<(), Error> {
         .author("Luminiscental <luminiscental01@gmail.com>")
         .about("Copy the volume curve from one difficulty of an osu map to other difficulties in the set.")
         .arg(Arg::with_name("source").help("The .osu file to copy the volume curve from.").required(true))
-        .arg(Arg::with_name("dest").help("Optionally specify a specific .osu file to copy the volume curve to. If not present this defaults to all other diffs in the beatmapset."))
-        .arg(Arg::with_name("mute_threshold").help("Ignore greenlines with volumes less than or equal to this (treat them as muting sliderends).").default_value("5"))
+        .arg(Arg::with_name("dest").long("dest").takes_value(true).help("Optionally specify a specific .osu file to copy the volume curve to. If not present this defaults to all other diffs in the beatmapset."))
+        .arg(Arg::with_name("mute_threshold").long("mute_threshold").takes_value(true).help("Ignore greenlines with volumes less than or equal to this (treat them as muting sliderends).").default_value("5"))
         .get_matches();
     let source = PathBuf::from(matches.value_of("source").unwrap());
     let mute_threshold = matches
