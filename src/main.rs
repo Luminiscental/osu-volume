@@ -8,7 +8,8 @@ use std::{
 
 #[derive(Debug)]
 enum Error {
-    FileOpenError(io::Error),
+    InvalidInput(String),
+    OnFileOpen(io::Error),
     NoSetFolder,
 }
 
@@ -17,7 +18,8 @@ const TIMING_HEADER: &str = "[TimingPoints]";
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::FileOpenError(err) => write!(f, "Could not open specified file: {}", err),
+            Self::InvalidInput(err) => write!(f, "Invalid input: {}", err),
+            Self::OnFileOpen(err) => write!(f, "Could not open specified file: {}", err),
             Self::NoSetFolder => write!(
                 f,
                 "No set folder was found, try specifying a target file with --dest"
@@ -33,12 +35,12 @@ fn find_siblings<P>(path: P) -> Result<Vec<PathBuf>, Error>
 where
     P: AsRef<Path>,
 {
-    let source_path = fs::canonicalize(path).map_err(Error::FileOpenError)?;
+    let source_path = fs::canonicalize(path).map_err(Error::OnFileOpen)?;
     let set = fs::read_dir(source_path.parent().ok_or(Error::NoSetFolder)?)
-        .map_err(Error::FileOpenError)?;
+        .map_err(Error::OnFileOpen)?;
     let mut siblings = Vec::new();
     for entry in set {
-        let path = entry.map_err(Error::FileOpenError)?.path();
+        let path = entry.map_err(Error::OnFileOpen)?.path();
         if path.extension().map(|s| s == "osu").unwrap_or(false) {
             siblings.push(path);
         }
@@ -99,7 +101,7 @@ fn make_inherited(line: &str) -> String {
 fn same_after_time(line1: &mut String, line2: &mut String) -> bool {
     let idx1 = line1.find(',').unwrap_or(0);
     let idx2 = line2.find(',').unwrap_or(0);
-    idx1 == idx2 && line1[idx1..] == line2[idx2..]
+    (idx1 == idx2) && (line1[idx1..] == line2[idx2..])
 }
 
 /// Check if two timing points have the same volume
@@ -115,23 +117,26 @@ struct VolumeCurve {
 }
 
 impl VolumeCurve {
-    fn parse(source: &str) -> Self {
+    fn parse(source: &str, mute_threshold: Volume) -> Self {
         let (_, timing, _) = extract_timing(source);
-        let mut points: Vec<_> = timing.lines().map(parse_point).collect();
+        let mut points: Vec<_> = timing
+            .lines()
+            .map(parse_point)
+            .filter(|point| point.1 > mute_threshold)
+            .collect();
         points.dedup_by(same_volume);
         Self { points }
     }
 
-    fn load<P>(source: P) -> Result<Self, Error>
+    fn load<P>(source: P, mute_threshold: Volume) -> Result<Self, Error>
     where
         P: AsRef<Path>,
     {
-        let source =
-            fs::read_to_string(source).map_err(Error::FileOpenError)?;
-        Ok(Self::parse(&source))
+        let source = fs::read_to_string(source).map_err(Error::OnFileOpen)?;
+        Ok(Self::parse(&source, mute_threshold))
     }
 
-    fn apply(&self, source: &str) -> String {
+    fn apply(&self, source: &str, mute_threshold: Volume) -> String {
         if self.points.is_empty() {
             return source.to_owned();
         }
@@ -161,9 +166,14 @@ impl VolumeCurve {
                 current_volume = self.points[write_idx].1;
                 write_idx += 1;
             } else {
+                let new_volume = if old_point.1 > mute_threshold {
+                    current_volume
+                } else {
+                    old_point.1
+                };
                 new_timing.push(write_point(
                     &make_inherited(line),
-                    (old_point.0, current_volume),
+                    (old_point.0, new_volume),
                 ));
             }
             last_line = line;
@@ -180,13 +190,13 @@ impl VolumeCurve {
         [before_timing, &new_timing, after_timing].concat()
     }
 
-    fn write<P>(&self, dest: P) -> Result<(), Error>
+    fn write<P>(&self, dest: P, mute_threshold: Volume) -> Result<(), Error>
     where
         P: AsRef<Path>,
     {
-        let contents =
-            fs::read_to_string(&dest).map_err(Error::FileOpenError)?;
-        fs::write(dest, self.apply(&contents)).map_err(Error::FileOpenError)
+        let contents = fs::read_to_string(&dest).map_err(Error::OnFileOpen)?;
+        fs::write(dest, self.apply(&contents, mute_threshold))
+            .map_err(Error::OnFileOpen)
     }
 }
 
@@ -197,16 +207,27 @@ fn main() -> Result<(), Error> {
         .about("Copy the volume curve from one difficulty of an osu map to other difficulties in the set.")
         .arg(Arg::with_name("source").help("The .osu file to copy the volume curve from.").required(true))
         .arg(Arg::with_name("dest").help("Optionally specify a specific .osu file to copy the volume curve to. If not present this defaults to all other diffs in the beatmapset."))
+        .arg(Arg::with_name("mute_threshold").help("Ignore greenlines with volumes less than or equal to this (treat them as muting sliderends).").default_value("5"))
         .get_matches();
     let source = PathBuf::from(matches.value_of("source").unwrap());
+    let mute_threshold = matches
+        .value_of("mute_threshold")
+        .unwrap()
+        .parse()
+        .map_err(|err| {
+            Error::InvalidInput(format!(
+                "Expected integer for volume threshold: {}",
+                err
+            ))
+        })?;
     let targets = if let Some(dest) = matches.value_of("dest") {
         vec![PathBuf::from(dest)]
     } else {
         find_siblings(&source)?
     };
-    let volume_curve = VolumeCurve::load(source)?;
+    let volume_curve = VolumeCurve::load(source, mute_threshold)?;
     for target in targets {
-        volume_curve.write(target)?;
+        volume_curve.write(target, mute_threshold)?;
     }
     Ok(())
 }
@@ -231,7 +252,7 @@ mod tests {
     #[test]
     fn volume_curve_parses() {
         let source = include_str!("testdiff.in");
-        let volume_curve = VolumeCurve::parse(source);
+        let volume_curve = VolumeCurve::parse(source, 5);
         assert_eq!(
             volume_curve.points,
             vec![
@@ -239,7 +260,7 @@ mod tests {
                 (1319, 20),
                 (1563, 15),
                 (1808, 10),
-                (2053, 5),
+                (2053, 50),
                 (2623, 20)
             ]
         );
@@ -248,14 +269,17 @@ mod tests {
     #[test]
     fn self_volume_curve_identity() {
         let source = include_str!("testdiff.in");
-        let application = VolumeCurve::parse(source).apply(&source);
+        let application = VolumeCurve::parse(source, 5).apply(&source, 5);
         assert_eq!(application, source);
     }
 
     #[test]
     fn empty_volume_curve_identity() {
         let source = include_str!("testdiff.in");
-        assert_eq!(VolumeCurve { points: Vec::new() }.apply(&source), source);
+        assert_eq!(
+            VolumeCurve { points: Vec::new() }.apply(&source, 5),
+            source
+        );
     }
 
     #[test]
@@ -264,8 +288,8 @@ mod tests {
             points: vec![(1, 20), (998, 80), (3011, 45)],
         };
         let source = include_str!("testdiff.in");
-        let once = curve.apply(&source);
-        let twice = curve.apply(&once);
+        let once = curve.apply(&source, 5);
+        let twice = curve.apply(&once, 5);
         assert_eq!(once, twice);
     }
 
@@ -274,7 +298,7 @@ mod tests {
         let curve = VolumeCurve {
             points: vec![
                 (5, 100),
-                (8, 2),
+                (8, 10),
                 (15, 20),
                 (101, 30),
                 (1400, 20),
@@ -286,6 +310,6 @@ mod tests {
         };
         let source = include_str!("testdiff.in");
         let expected = include_str!("testdiff_output.in");
-        assert_eq!(curve.apply(&source), expected);
+        assert_eq!(curve.apply(&source, 5), expected);
     }
 }
