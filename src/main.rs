@@ -101,7 +101,7 @@ fn make_inherited(line: &str) -> String {
 fn same_after_time(line1: &mut String, line2: &mut String) -> bool {
     let idx1 = line1.find(',').unwrap_or(0);
     let idx2 = line2.find(',').unwrap_or(0);
-    (idx1 == idx2) && (line1[idx1..] == line2[idx2..])
+    line1[idx1..] == line2[idx2..]
 }
 
 /// Check if two timing points have the same volume
